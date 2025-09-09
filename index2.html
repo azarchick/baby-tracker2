@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  .tabs { display: flex; margin-bottom: 0; }
+  .tab { flex: 1; padding: 10px; cursor: pointer; text-align: center; font-weight: bold; background: #eee; color: #333; }
+  .tab.active.sleep { background: #ff5722; color: white; }
+  .tab.active.feed { background: #2e7d32; color: white; }
+
+  .content { display: none; padding: 15px; border-radius: 6px; margin-top:0; }
+  .content.active { display: block; }
+
+  .session, .feeding { margin-bottom: 10px; }
+  .total { font-weight: bold; margin-top: 10px; }
+  button { margin-left: 5px; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+
+  /* Sleep tab styling */
+  #sleepContent { background-color: #fdf6ec; border-radius: 6px; }
+  #startSleep, #stopSleep {
+    background-color: #ff9800;
+    color: white;
+    font-weight: bold;
+    border: none;
+  }
+  #startSleep:disabled, #stopSleep:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  #startSleep:active:not(:disabled), #stopSleep:active:not(:disabled) {
+    background-color: #ffb74d;
+  }
+
+  /* Sleep session buttons */
+  .sleepEditBtn, .sleepDeleteBtn {
+    background-color: white;
+    border: 1px solid #ff9800;
+    color: #ff9800;
+    font-weight: bold;
+  }
+  .sleepEditBtn:active, .sleepDeleteBtn:active {
+    background-color: #ffe0b2;
+  }
+
+  /* Feeding tab styling */
+  #feedContent { background: #e8f5e9; padding: 15px; border-radius:6px; }
+  #addFeed {
+    background-color: #4caf50;
+    color: white;
+    font-weight: bold;
+  }
+  #addFeed:active { background-color: #81c784; }
+  #feedAmount { padding: 6px; border-radius: 4px; border: 1px solid #ccc; width: 80px; }
+  .feedDeleteBtn {
+    background-color: white;
+    border: 1px solid #2e7d32;
+    color: #2e7d32;
+    font-weight: bold;
+  }
+  .feedDeleteBtn:active { background-color: #c8e6c9; }
+
+  /* Session times and duration */
+  .sessionTimes { font-size: 0.9em; margin-bottom: 3px; color: #555; }
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <div id="sleepTab" class="tab active sleep">SLEEP</div>
+  <div id="feedTab" class="tab feed">FEEDING</div>
+</div>
+
+<!-- Sleep tab -->
+<div id="sleepContent" class="content active">
+  <button id="startSleep">Start Sleep</button>
+  <button id="stopSleep" disabled>Stop Sleep</button>
+  <div id="currentDuration" style="margin:10px 0; font-weight:bold;"></div>
+  <div id="sleepSessions"></div>
+</div>
+
+<!-- Feeding tab -->
+<div id="feedContent" class="content">
+  <input type="number" id="feedAmount" placeholder="ml" />
+  <button id="addFeed">Add Feeding</button>
+  <div id="feedSessions" style="margin-top:10px;"></div>
+</div>
+
+<script>
+// ---------- Helpers ----------
+function formatDate(dateObj) {
+  return dateObj.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).replace(/\b([a-z]{3})\b/i, (m) => m.toUpperCase());
+}
+
+function formatTime(dateObj) {
+  return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+// ---------- Tabs ----------
+const sleepTab = document.getElementById("sleepTab");
+const feedTab = document.getElementById("feedTab");
+const sleepContent = document.getElementById("sleepContent");
+const feedContent = document.getElementById("feedContent");
+
+sleepTab.addEventListener("click", () => {
+  sleepTab.classList.add("active", "sleep");
+  feedTab.classList.remove("active", "feed");
+  sleepContent.classList.add("active");
+  feedContent.classList.remove("active");
+});
+
+feedTab.addEventListener("click", () => {
+  feedTab.classList.add("active", "feed");
+  sleepTab.classList.remove("active", "sleep");
+  feedContent.classList.add("active");
+  sleepContent.classList.remove("active");
+});
+
+// ---------- Sleep tracking ----------
+let startTime = null;
+let durationInterval = null;
+let sleepSessions = JSON.parse(localStorage.getItem("sleepSessions")) || {};
+
+// Fix old date formats (9-9-2025 -> 9 SEP 2025)
+for (let oldDate in sleepSessions) {
+  if (!/[A-Za-z]/.test(oldDate)) {
+    const firstSession = sleepSessions[oldDate][0];
+    const newDate = formatDate(new Date(firstSession.start));
+    if (!sleepSessions[newDate]) sleepSessions[newDate] = [];
+    sleepSessions[newDate] = sleepSessions[newDate].concat(sleepSessions[oldDate]);
+    delete sleepSessions[oldDate];
+  }
+}
+localStorage.setItem("sleepSessions", JSON.stringify(sleepSessions));
+
+function renderSleepSessions() {
+  const container = document.getElementById("sleepSessions");
+  container.innerHTML = "";
+  Object.keys(sleepSessions).forEach(date => {
+    let total = 0;
+    const dayDiv = document.createElement("div");
+    dayDiv.innerHTML = `<h3>${date}</h3>`;
+    sleepSessions[date].forEach((session, index) => {
+      let start = new Date(session.start);
+      let end = new Date(session.end);
+      let duration = Math.floor((end - start) / 1000 / 60);
+      total += duration;
+
+      const div = document.createElement("div");
+      div.className = "session";
+
+      // Display time range
+      const timesDiv = document.createElement("div");
+      timesDiv.className = "sessionTimes";
+      timesDiv.textContent = `${formatTime(start)} - ${formatTime(end)}`;
+      div.appendChild(timesDiv);
+
+      // Display duration
+      const durationDiv = document.createElement("div");
+      durationDiv.textContent = `Duration: ${duration} minutes`;
+      div.appendChild(durationDiv);
+
+      // Edit button
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.className = "sleepEditBtn";
+      editBtn.onclick = () => {
+        const newMinutes = parseInt(prompt("Enter new duration in minutes:", duration));
+        if (!isNaN(newMinutes) && newMinutes > 0) {
+          session.end = session.start + newMinutes * 60 * 1000;
+          localStorage.setItem("sleepSessions", JSON.stringify(sleepSessions));
+          renderSleepSessions();
+        }
+      };
+      div.appendChild(editBtn);
+
+      // Delete button
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Delete";
+      delBtn.className = "sleepDeleteBtn";
+      delBtn.onclick = () => {
+        sleepSessions[date].splice(index, 1);
+        if (sleepSessions[date].length === 0) delete sleepSessions[date];
+        localStorage.setItem("sleepSessions", JSON.stringify(sleepSessions));
+        renderSleepSessions();
+      };
+      div.appendChild(delBtn);
+
+      dayDiv.appendChild(div);
+    });
+
+    const totalDiv = document.createElement("div");
+    totalDiv.className = "total";
+    totalDiv.textContent = `Total: ${total} minutes`;
+    dayDiv.appendChild(totalDiv);
+    container.appendChild(dayDiv);
+  });
+}
+
+document.getElementById("startSleep").addEventListener("click", () => {
+  startTime = Date.now();
+  document.getElementById("startSleep").disabled = true;
+  document.getElementById("stopSleep").disabled = false;
+
+  durationInterval = setInterval(() => {
+    const minutes = Math.floor((Date.now() - startTime) / 1000 / 60);
+    document.getElementById("currentDuration").textContent =
+      `Current duration: ${minutes} minutes`;
+  }, 1000);
+});
+
+document.getElementById("stopSleep").addEventListener("click", () => {
+  clearInterval(durationInterval);
+  document.getElementById("currentDuration").textContent = "";
+
+  const endTime = Date.now();
+  const date = formatDate(new Date());
+  if (!sleepSessions[date]) sleepSessions[date] = [];
+  sleepSessions[date].push({ start: startTime, end: endTime });
+  localStorage.setItem("sleepSessions", JSON.stringify(sleepSessions));
+
+  document.getElementById("startSleep").disabled = false;
+  document.getElementById("stopSleep").disabled = true;
+
+  renderSleepSessions();
+});
+
+renderSleepSessions();
+
+// ---------- Feeding tracking ----------
+const feedSessions = JSON.parse(localStorage.getItem("feedSessions")) || {};
+
+function renderFeedSessions() {
+  const container = document.getElementById("feedSessions");
+  container.innerHTML = "";
+  Object.keys(feedSessions).forEach(date => {
+    let total = 0;
+    const dayDiv = document.createElement("div");
+    dayDiv.innerHTML = `<h3>${date}</h3>`;
+    feedSessions[date].forEach((amount, index) => {
+      total += amount;
+      const div = document.createElement("div");
+      div.className = "feeding";
+      div.textContent = `${amount} ml`;
+
+      const delBtn = document.createElement("button");
+      delBtn.textContent = "Delete";
+      delBtn.className = "feedDeleteBtn";
+      delBtn.onclick = () => {
+        feedSessions[date].splice(index, 1);
+        if (feedSessions[date].length === 0) delete feedSessions[date];
+        localStorage.setItem("feedSessions", JSON.stringify(feedSessions));
+        renderFeedSessions();
+      };
+      div.appendChild(delBtn);
+
+      dayDiv.appendChild(div);
+    });
+
+    const totalDiv = document.createElement("div");
+    totalDiv.className = "total";
+    totalDiv.textContent = `Total: ${total} ml`;
+    dayDiv.appendChild(totalDiv);
+    container.appendChild(dayDiv);
+  });
+}
+
+document.getElementById("addFeed").addEventListener("click", () => {
+  const amount = parseInt(document.getElementById("feedAmount").value);
+  if (!amount) return;
+  const date = formatDate(new Date());
+  if (!feedSessions[date]) feedSessions[date] = [];
+  feedSessions[date].push(amount);
+  localStorage.setItem("feedSessions", JSON.stringify(feedSessions));
+  document.getElementById("feedAmount").value = "";
+  renderFeedSessions();
+});
+
+renderFeedSessions();
+</script>
+</body>
+</html>
